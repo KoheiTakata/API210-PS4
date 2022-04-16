@@ -1,0 +1,263 @@
+---
+title: "API210-PS4"
+author: "Kohei Takata"
+date: "4/15/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+tinytex::install_tinytex()
+```
+
+```{r import packages, message=FALSE, warning=FALSE, include=TRUE}
+## install packages if necessary
+
+#install.packages("ggplot2")
+#install.packages("tidyverse")
+#install.packages("kableExtra")
+#install.packages("psych")
+#install.packages("sf")
+#install.packages("rnaturalearth")
+#install.packages("rnaturalearthdata")
+#install.packages("rgeos")
+
+## import packages 
+library(tidyverse)
+library(haven)
+library(psych)
+library(zoo)
+library(gridExtra)
+library(kableExtra)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(rgeos)
+
+```
+
+
+```{r import data, include = TRUE}
+data_ori <- read_dta("munic.dta")
+```
+
+## 15: Create summary statistics for five variables of your choice.
+Variables:
+r_util94 / r_util98/ r_util02 / voters96 / income
+```{r 15, include = TRUE}
+table_15 <- data_ori %>% 
+            select(r_util94, r_util98, r_util02, gini, income) %>% 
+            describe() %>% 
+            select(c("n", "mean", "sd", "median", "min", "max"))
+
+rownames(table_15) <- data_ori %>% 
+                      select(r_util94, r_util98, r_util02, gini, income) %>% 
+                      map_dfc(attr, "label")   ##extract labels from attributes
+
+round(table_15 ,2)%>% 
+  kbl(caption = "Descriptive Statistics") %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>% 
+  kable_styling(latex_options = "HOLD_position")
+
+```
+
+## 16.	Where in Brazil are the treated and control municipalities? Plot a map of Brazil with the following:
+a.	In one color, the location of the control municipalities, using a bandwidth of 5,000 registered voters.
+b.	Using another color, the location of the treated municipalities, again using a bandwidth of 5,000 registered voters.
+c.	The size of each point representing a municipality should be proportional to the number of registered voters in 1996.
+
+```{r 16, include=TRUE}
+cut_off = 40500
+band    = 5000
+
+data_16b <- data_ori %>% 
+            mutate(treat = ifelse((voters96 >= cut_off & voters96 <= cut_off + band), 1,
+                           ifelse((voters96 <  cut_off & voters96 >= cut_off - band), 0, NA))) %>%  ## cut off +- band
+            mutate(Type  = ifelse(treat == 1, "Treatment",
+                           ifelse(treat == 0, "Control"  , NA))) %>%                                ## treated/control in string 
+            mutate(longitude = -1*longitude) %>%                                                    ## reverse longitude
+            select(c(voters96, r_util94, r_util98, r_util02, treat, Type, latitude, longitude)) %>% ## select necessary variables
+            filter(!is.na(treat))
+
+# Load world's map 
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Create map of Italy (select coordinates in world map)
+Brazil_plot <- ggplot(data = world) +
+  geom_sf() +
+  coord_sf(ylim = c(5, -35), xlim = c(-75, -32), expand = FALSE) 
+
+chart_16 <- Brazil_plot +
+            geom_point(data = data_16b, aes(x =  longitude, y = latitude, color = Type, size = voters96))+
+            labs(title = "Chart_15: Treatment/Control in Brazil",
+                 x     = NULL,
+                 y     = NULL) +
+            theme(axis.text.x = element_blank(),
+                  axis.text.y = element_blank(),
+                  axis.ticks  = element_blank())
+
+ggsave("chart_16.jpeg", chart_16)
+
+chart_16  
+```
+
+## 17 Plot the discontinuity in valid votes/turnout in 1994, 1998, and 2002 by plotting the average of valid votes/turnout of bins of municipalities using 5000-voters bins. Make sure to highlight the 40,500 cutoff.
+
+```{r 17, include = TRUE}
+## set bins for classification
+bins       <- seq(from = 0, to = 80000, by = 5000)
+
+bins_label <- rep(NA, length(bins)-1)  ## create an NA vector
+
+# fill bin labels by "0-5000", "5000-1000" ...
+for (i in 1:length(bins) -1){
+  bins_label[i] <- paste(bins[i], "-", bins[i + 1])
+              }
+
+## create a data set
+data_17 <- data_ori %>% 
+           filter(voters96 <= 80000) %>%  ## filter up to 80,000
+           mutate(bins = cut(voters96, breaks = bins,
+                                       labels = bins_label)) %>%  ## cut muni? by 5000 each 
+           group_by(bins) %>% 
+           summarize("1994" = mean(r_util94, na.rm = TRUE),       ## mean of each vote/turnout data
+                     "1998" = mean(r_util98),
+                     "2002" = mean(r_util02)) %>% 
+           gather(key = "Years", value = "Value", - bins)        ## reshape data to long for plotting
+
+## plot 
+chart_17 <- ggplot(data = data_17, aes(x = bins, y = Value*100, color = Years, group = Years))+
+            geom_line()+ 
+            geom_point()+
+            geom_vline(xintercept = 40500/5000, linetype = "dashed") +
+            labs(title = "Chart_17: Votes/Turnout by Scale of Municipalities for each year",
+                 x     = "Scale of Municipalities",
+                 y     = "Votes/Turnout (%)") + 
+                 theme(axis.text.x = element_text(size = 8, angle = 90)) 
+
+ggsave("chart_17.jpeg", chart_17)
+
+chart_17
+```
+
+
+## 18. [Optional] Make a similar plot (with 5000-voters bins) for the number of registered voters/ population and turnout over registered voters.
+
+```{r 18, include=TRUE}
+## create a data set
+data_18 <- data_ori %>% 
+           filter(voters96 <= 80000) %>%  ## filter up to 80,000
+           mutate(bins = cut(voters96, breaks = bins,
+                                       labels = bins_label)) %>%      ## cut muni? by 5000 each 
+           group_by(bins) %>% 
+           summarize("Register/Pop"     = mean(regist, na.rm = TRUE), ## mean of registered voter over population
+                     "Turnout/Register" = mean(attend)) %>%           ## mean of turnout over population
+           gather(key = "Variables", value = "Value", - bins)         ## reshape data to long for plotting
+
+## plot 
+chart_18 <- ggplot(data = data_18, aes(x = bins, y = Value*100, color = Variables, group = Variables))+
+            geom_line()+ 
+            geom_point()+
+            geom_vline(xintercept = 8 + 500/5000, linetype = "dashed") +
+            labs(title = "Chart_18: Other Variables by Scale of Municipalities for each year",
+                 x     = "Scale of Municipalities",
+                 y     = "(%)") + 
+                 theme(axis.text.x = element_text(size = 8, angle = 90)) 
+
+ggsave("chart_18.jpeg", chart_18)
+
+chart_18
+
+
+```
+
+## 19. Create a function to implement regression (2) in the paper. Your function should take an outcome variable and bandwidth as arguments, and return: 
+a.	The full sample mean of the outcome variable
+b.	The coefficient from regression (2) on treatment, 
+c.	Its standard error. 
+
+$$y_m = \alpha + \beta 1  \{v_m > 40,500\} + \gamma*v_m + \delta *v_m1\{v_m > 40,500\} + \epsilon_m$$
+```{r 19, include = TRUE}
+func_19 <- function(outcomes, bands){
+  ## set results in advance
+  results <- list()
+  
+  for (j in 1:length(outcomes)){
+    ## parameter
+    outcome <- outcomes[j] 
+    
+    
+    ## result   
+    result <- array(data = NA,
+                    dim  = c(length(bands),3),
+                    dimnames = list(
+                      bands,
+                      c("Mean", "Treatment Effect", "Standard Error")))
+      
+    ## for loop for multiple bands
+    for (i in 1:length(bands)){
+      ## parameters
+      cut_off <-  40500
+      band    <-  bands[i]
+      
+      ## create a data set 
+      data_19 <- data_ori %>% 
+                 mutate(treat = ifelse((voters96 >= cut_off & voters96 <= cut_off + band), 1,
+                                ifelse((voters96 <  cut_off & voters96 >= cut_off - band), 0, NA))) %>%  ## cut off +- band
+                 filter(!is.na(treat))
+      
+      ## select necessary variables
+      data_19 <- data_19[, c(outcome, "voters96", "treat")]
+      
+      ## rename data set for regression
+      colnames(data_19)[1] <- "outcome"
+      
+      reg_19  <- lm(outcome*100 ~ treat + voters96 + voters96*treat, data = data_19)
+      
+      
+      #a.	The full sample mean of the outcome variable
+      result[i, 1] <- round(mean(data_19$outcome, na.rm = TRUE)*100, 2)
+      
+      #b.	The coefficient from regression (2) on treatment, 
+      result[i, 2] <- round(reg_19$coefficients[2], 2)
+      
+      #c.	Its standard error. 
+      result[i, 3] <- round(summary(reg_19)$coefficients[2,2], 2)
+    }
+    
+    # format result
+    results[[j]]<- result %>% 
+              kbl(caption = attributes(data_19$outcome)$label) %>%  ## extract label data from attributes
+              kable_classic(full_width = F, html_font = "Cambria") %>% 
+              kable_styling(latex_options = "HOLD_position")
+    
+  }
+  return(results)
+}
+```
+
+>You do not need to add weights. What kernel is this?
+=> rectangular kernel
+
+>You do not need to include state fixed effects, but why would you want to include them in this setting? 
+=> There may be some unobserved state-specific, time-invariant variables which affects on the voting behaviour. Thus, it would be better to control them by setting state fixed effects.
+
+## 20.	Using the function you wrote in the previous question, report the coefficients you estimate for treatment status for the following outcomes: for the following bandwidths: 15000, 10000, 5000 registered voters. 
+
+```{r 20, include=TRUE, results = 'asis'}
+
+## a.	Valid votes/turnout in 1998
+func_19("r_util98", c(5000, 10000, 15000))
+
+## b.	Valid votes/turnout in 1994 and 2002
+func_19(c("r_util94", "r_util02"), c(5000, 10000, 15000))
+
+## c.	Four covariates of your choice to test covariate smoothness. 
+func_19(c("gini", "income", "regist", "attend"), c(5000, 10000, 15000))
+```
+
+>In practice, how would you choose your bandwidth? Comment on your results.
+=> There are some papers proposing optimal choice of bandwiwdth (e.g. Imbens & Kalyanaraman_2009). I would follow them to balance bias and variance.
+For the results, the larger the bandwidth is, the smaller SE I get. The treatment effect becomes statistically significant. For other variables, I do not see any significant change around the cutoff. This increases the credibility of the treatment effect as causal inference.
